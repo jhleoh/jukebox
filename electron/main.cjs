@@ -218,6 +218,49 @@ function toDataUrl(picture) {
   return `data:${mime};base64,${base64}`
 }
 
+function formatRating(ratingValue) {
+  if (Array.isArray(ratingValue)) {
+    return formatRating(ratingValue[0])
+  }
+
+  if (typeof ratingValue === 'number' && Number.isFinite(ratingValue)) {
+    return `${Math.max(0, Math.min(5, ratingValue))}/5`
+  }
+
+  if (typeof ratingValue === 'string') {
+    const trimmed = ratingValue.trim()
+    if (!trimmed) {
+      return null
+    }
+
+    if (/^\d+(\.\d+)?(\/\d+)?$/.test(trimmed)) {
+      return trimmed.includes('/') ? trimmed : `${trimmed}/5`
+    }
+
+    return trimmed
+  }
+
+  if (ratingValue && typeof ratingValue === 'object') {
+    if (typeof ratingValue.rating === 'number') {
+      return `${Math.max(0, Math.min(5, ratingValue.rating))}/5`
+    }
+
+    if (typeof ratingValue.value === 'number') {
+      return `${Math.max(0, Math.min(5, ratingValue.value))}/5`
+    }
+
+    if (typeof ratingValue.rating === 'string') {
+      return ratingValue.rating
+    }
+
+    if (typeof ratingValue.value === 'string') {
+      return ratingValue.value
+    }
+  }
+
+  return null
+}
+
 async function scanMusicDirectory(rootPath) {
   const { parseFile } = await import('music-metadata')
   const audioFiles = await collectAudioFiles(rootPath)
@@ -233,6 +276,7 @@ async function scanMusicDirectory(rootPath) {
       const key = `${artist}__${album}`
       const coverDataUrl = toDataUrl(metadata.common.picture?.[0])
       const trackNo = metadata.common.track?.no || null
+      const rating = formatRating(metadata.common.rating)
       const durationSeconds = Number.isFinite(metadata.format.duration)
         ? Math.round(metadata.format.duration)
         : null
@@ -262,6 +306,7 @@ async function scanMusicDirectory(rootPath) {
         filePath,
         trackNo,
         durationSeconds,
+        rating,
         coverDataUrl: coverDataUrl || entry.coverDataUrl || DEFAULT_COVER,
       })
     } catch {

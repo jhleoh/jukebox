@@ -18,6 +18,7 @@ type Track = {
   filePath: string
   trackNo: number | null
   durationSeconds: number | null
+  rating?: string | null
   coverDataUrl?: string
 }
 
@@ -52,6 +53,9 @@ function App() {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [volume, setVolume] = useState(0.8)
+  const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null)
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState('liked-songs')
+  const [likedTrackIds, setLikedTrackIds] = useState<string[]>([])
 
   const audioRef = useRef<HTMLAudioElement>(null)
 
@@ -121,6 +125,58 @@ function App() {
   const totalDuration = Math.max(duration || currentTrack?.durationSeconds || 0, 0)
   const seekMax = Math.max(totalDuration, 1)
   const seekValue = Math.min(currentTime, seekMax)
+
+  const selectedAlbum = useMemo(() => {
+    if (!library || !selectedAlbumId) {
+      return null
+    }
+
+    return library.albums.find((album) => album.id === selectedAlbumId) ?? null
+  }, [library, selectedAlbumId])
+
+  const selectedAlbumTracks = useMemo(() => {
+    if (!library || !selectedAlbumId) {
+      return []
+    }
+
+    return library.tracks
+      .filter((track) => track.albumId === selectedAlbumId)
+      .sort((left, right) => {
+        const leftTrackNo = left.trackNo ?? Number.MAX_SAFE_INTEGER
+        const rightTrackNo = right.trackNo ?? Number.MAX_SAFE_INTEGER
+
+        if (leftTrackNo !== rightTrackNo) {
+          return leftTrackNo - rightTrackNo
+        }
+
+        return left.title.localeCompare(right.title)
+      })
+  }, [library, selectedAlbumId])
+
+  const playlists = useMemo(
+    () => [{ id: 'liked-songs', name: 'Liked Songs' }],
+    [],
+  )
+
+  const selectedPlaylistTracks = useMemo(() => {
+    if (!library || selectedPlaylistId !== 'liked-songs') {
+      return []
+    }
+
+    return library.tracks
+      .filter((track) => likedTrackIds.includes(track.id))
+      .sort((left, right) => {
+        if (left.artist !== right.artist) {
+          return left.artist.localeCompare(right.artist)
+        }
+
+        if (left.album !== right.album) {
+          return left.album.localeCompare(right.album)
+        }
+
+        return (left.trackNo ?? Number.MAX_SAFE_INTEGER) - (right.trackNo ?? Number.MAX_SAFE_INTEGER)
+      })
+  }, [library, likedTrackIds, selectedPlaylistId])
 
   useEffect(() => {
     const audio = audioRef.current
@@ -193,6 +249,40 @@ function App() {
     setQueue(tracks)
     setQueueIndex(0)
     setIsPlaying(true)
+  }
+
+  const openAlbumTracks = (albumId: string) => {
+    setSelectedAlbumId(albumId)
+  }
+
+  const playTrackFromAlbum = (track: Track) => {
+    if (!library) {
+      return
+    }
+
+    const tracks = library.tracks.filter((albumTrack) => albumTrack.albumId === track.albumId)
+    if (tracks.length === 0) {
+      return
+    }
+
+    const nextIndex = tracks.findIndex((albumTrack) => albumTrack.id === track.id)
+    if (nextIndex < 0) {
+      return
+    }
+
+    setQueue(tracks)
+    setQueueIndex(nextIndex)
+    setIsPlaying(true)
+  }
+
+  const toggleLikedTrack = (track: Track) => {
+    setLikedTrackIds((previous) => {
+      if (previous.includes(track.id)) {
+        return previous.filter((id) => id !== track.id)
+      }
+
+      return [...previous, track.id]
+    })
   }
 
   const queueAllVisible = () => {
@@ -311,38 +401,178 @@ function App() {
       {isLoading ? <p className="loading">Scanning your music files...</p> : null}
 
       <section className="content-grid">
-        <section className="album-grid" aria-live="polite">
-          {filteredAlbums.map((album) => (
-            <article
-              key={album.id}
-              className="album-card"
-              onDoubleClick={() => queueAlbum(album.id)}
-              title="Double-click to queue and play this album"
+        <aside className="playlist-panel">
+          <div className="playlist-panel-header">
+            <h3>Playlists</h3>
+            <select
+              aria-label="Select playlist"
+              value={selectedPlaylistId}
+              onChange={(event) => setSelectedPlaylistId(event.target.value)}
             >
-              {album.coverDataUrl ? (
-                <img src={album.coverDataUrl} alt={`${album.album} cover art`} />
-              ) : (
-                <div className="placeholder" aria-hidden="true">
-                  {album.album.slice(0, 1).toUpperCase()}
+              {playlists.map((playlist) => (
+                <option key={playlist.id} value={playlist.id}>
+                  {playlist.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="playlist-track-list" role="list">
+            {selectedPlaylistTracks.length > 0 ? (
+              selectedPlaylistTracks.map((track) => {
+                const liked = likedTrackIds.includes(track.id)
+
+                return (
+                  <div key={track.id} className="playlist-track-item" role="listitem">
+                    <button
+                      type="button"
+                      className="playlist-track-title"
+                      onClick={() => playTrackFromAlbum(track)}
+                    >
+                      <span>{track.title}</span>
+                      <small>{track.artist}</small>
+                    </button>
+                    <button
+                      type="button"
+                      className={liked ? 'playlist-star active' : 'playlist-star'}
+                      aria-label={liked ? 'Remove from liked songs' : 'Add to liked songs'}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        toggleLikedTrack(track)
+                      }}
+                    >
+                      {liked ? '★' : '☆'}
+                    </button>
+                  </div>
+                )
+              })
+            ) : (
+              <p className="empty playlist-empty">No songs in this playlist yet.</p>
+            )}
+          </div>
+        </aside>
+
+        <section className="main-content" aria-live="polite">
+          {selectedAlbum && selectedAlbumTracks.length > 0 ? (
+            <section className="album-detail">
+              <div className="album-detail-header">
+                <div className="album-detail-info">
+                  {selectedAlbum.coverDataUrl ? (
+                    <img src={selectedAlbum.coverDataUrl} alt={`${selectedAlbum.album} cover art`} />
+                  ) : (
+                    <div className="placeholder small" aria-hidden="true">
+                      {selectedAlbum.album.slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
+                  <div>
+                    <h2>{selectedAlbum.album}</h2>
+                    <p>{selectedAlbum.artist}</p>
+                    <small>{selectedAlbum.trackCount} track{selectedAlbum.trackCount === 1 ? '' : 's'}</small>
+                  </div>
                 </div>
-              )}
-              <h2>{album.album}</h2>
-              <p>{album.artist}</p>
-              <small>
-                {album.trackCount} track{album.trackCount === 1 ? '' : 's'}
-              </small>
-              <button
-                type="button"
-                className="tiny"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  queueAlbum(album.id)
-                }}
-              >
-                Play Album
-              </button>
-            </article>
-          ))}
+                <div className="album-detail-actions">
+                  <button
+                    type="button"
+                    className="accent"
+                    onClick={() => queueAlbum(selectedAlbum.id)}
+                  >
+                    Play Album
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => setSelectedAlbumId(null)}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              <div className="track-list-wrapper">
+                <table className="track-list">
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Album</th>
+                      <th>Track #</th>
+                      <th>Artist</th>
+                      <th>Rating</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedAlbumTracks.map((track) => {
+                      const liked = likedTrackIds.includes(track.id)
+
+                      return (
+                        <tr key={track.id} title="Click to play this track">
+                          <td>
+                            <div className="track-title-cell">
+                              <button
+                                type="button"
+                                className="track-title-button"
+                                onClick={() => playTrackFromAlbum(track)}
+                              >
+                                {track.title}
+                              </button>
+                              <button
+                                type="button"
+                                className={liked ? 'playlist-star active' : 'playlist-star'}
+                                aria-label={liked ? 'Remove from liked songs' : 'Add to liked songs'}
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  toggleLikedTrack(track)
+                                }}
+                              >
+                                {liked ? '★' : '☆'}
+                              </button>
+                            </div>
+                          </td>
+                          <td>{track.album}</td>
+                          <td>{track.trackNo ?? '—'}</td>
+                          <td>{track.artist}</td>
+                          <td>{track.rating ?? '—'}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : (
+            <section className="album-grid">
+              {filteredAlbums.map((album) => (
+                <article
+                  key={album.id}
+                  className="album-card"
+                  onDoubleClick={() => openAlbumTracks(album.id)}
+                  title="Double-click to view songs in this album"
+                >
+                  {album.coverDataUrl ? (
+                    <img src={album.coverDataUrl} alt={`${album.album} cover art`} />
+                  ) : (
+                    <div className="placeholder" aria-hidden="true">
+                      {album.album.slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
+                  <h2>{album.album}</h2>
+                  <p>{album.artist}</p>
+                  <small>
+                    {album.trackCount} track{album.trackCount === 1 ? '' : 's'}
+                  </small>
+                  <button
+                    type="button"
+                    className="tiny"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      queueAlbum(album.id)
+                    }}
+                  >
+                    Play Album
+                  </button>
+                </article>
+              ))}
+            </section>
+          )}
         </section>
 
         <aside className="side-panel">
@@ -415,21 +645,38 @@ function App() {
           <section className="queue-panel">
             <h3>Playlist Queue</h3>
             <ul>
-              {queue.map((track, index) => (
-                <li key={track.id}>
-                  <button
-                    type="button"
-                    className={index === queueIndex ? 'queue-item active' : 'queue-item'}
-                    onClick={() => {
-                      setQueueIndex(index)
-                      setIsPlaying(true)
-                    }}
-                  >
-                    <span>{track.title}</span>
-                    <small>{track.artist}</small>
-                  </button>
-                </li>
-              ))}
+              {queue.map((track, index) => {
+                const liked = likedTrackIds.includes(track.id)
+
+                return (
+                  <li key={track.id}>
+                    <div className={index === queueIndex ? 'queue-item active' : 'queue-item'}>
+                      <button
+                        type="button"
+                        className="queue-track-button"
+                        onClick={() => {
+                          setQueueIndex(index)
+                          setIsPlaying(true)
+                        }}
+                      >
+                        <span>{track.title}</span>
+                        <small>{track.artist}</small>
+                      </button>
+                      <button
+                        type="button"
+                        className={liked ? 'playlist-star active' : 'playlist-star'}
+                        aria-label={liked ? 'Remove from liked songs' : 'Add to liked songs'}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          toggleLikedTrack(track)
+                        }}
+                      >
+                        {liked ? '★' : '☆'}
+                      </button>
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
           </section>
         </aside>
